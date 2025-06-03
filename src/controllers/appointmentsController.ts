@@ -1,60 +1,60 @@
-import { NextFunction, Request, Response } from 'express'
-import { AppointmentModel } from '../models/appointmentModel'
-import { catchAsync } from '../../utils/catchAsync'
-import { AppError } from '../../utils/appErrorr'
+import { NextFunction, Request, Response } from "express";
+import { AppointmentModel } from "../models/appointmentModel";
+import { catchAsync } from "../utils/catchAsync";
+import { AppError } from "../utils/appErrorr";
 
-type SanitizedQuery = Record<string, string | string[] | undefined>
+type SanitizedQuery = Record<string, string | string[] | undefined>;
 
 export const getAllAppointments = catchAsync(
   async (req: Request & { sanitizedQuery?: SanitizedQuery }, res: Response) => {
-    const query = req.sanitizedQuery ?? req.query
-    const appointments = await AppointmentModel.find(query)
+    const query = req.sanitizedQuery ?? req.query;
+    const appointments = await AppointmentModel.find(query);
     res.status(200).json({
-      status: 'success',
+      status: "success",
       results: appointments.length,
       data: {
         appointments,
       },
-    })
-  },
-)
+    });
+  }
+);
 export const getAppointment = catchAsync(
   async (
     req: Request & { sanitizedQuery?: SanitizedQuery },
     res: Response,
-    next: NextFunction,
+    next: NextFunction
   ) => {
-    const appointment = await AppointmentModel.findById(req.params.id)
+    const appointment = await AppointmentModel.findById(req.params.id);
     if (!appointment) {
-      return next(new AppError('No appointment found with that id', 404))
+      return next(new AppError("No appointment found with that id", 404));
     }
     res.status(200).json({
-      status: 'success',
+      status: "success",
       data: {
         appointment,
       },
-    })
-  },
-)
+    });
+  }
+);
 
 export const createAppointment = catchAsync(
   async (req: Request, res: Response) => {
-    const slots = req.body.slots
+    const slots = req.body.slots;
 
     if (!Array.isArray(slots) || slots.length === 0) {
-      res.status(400).json({ message: 'No appointment slots to create.' })
-      return
+      res.status(400).json({ message: "No appointment slots to create." });
+      return;
     }
 
-    const insertedSlots = await AppointmentModel.insertMany(slots)
+    const insertedSlots = await AppointmentModel.insertMany(slots);
 
     res.status(201).json({
-      status: 'success',
+      status: "success",
       message: `${insertedSlots.length} slots created.`,
       data: insertedSlots,
-    })
-  },
-)
+    });
+  }
+);
 export const updateAppointment = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const appointment = await AppointmentModel.findByIdAndUpdate(
@@ -63,49 +63,49 @@ export const updateAppointment = catchAsync(
       {
         new: true,
         runValidators: true,
-      },
-    )
+      }
+    );
 
     if (!appointment) {
-      return next(new AppError('No appointment found with that id', 404))
+      return next(new AppError("No appointment found with that id", 404));
     }
 
     res.status(200).json({
-      status: 'success',
+      status: "success",
       data: { appointment },
-    })
-  },
-)
+    });
+  }
+);
 
 export const deleteAppointment = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const appointment = await AppointmentModel.findByIdAndDelete(req.params.id)
+    const appointment = await AppointmentModel.findByIdAndDelete(req.params.id);
     if (!appointment) {
-      return next(new AppError('No appointment found with that id', 404))
+      return next(new AppError("No appointment found with that id", 404));
     }
     res.status(204).json({
-      status: 'success',
-    })
-  },
-)
+      status: "success",
+    });
+  }
+);
 
 export const reassignAppointmentsController = catchAsync(
   async (req: Request, res: Response) => {
-    const updated = req.body.updatedEvents
+    const updated = req.body.updatedEvents;
 
     if (!updated || updated.length === 0) {
       res.status(200).json({
-        status: 'success',
-        message: 'No appointments were reassigned.',
+        status: "success",
+        message: "No appointments were reassigned.",
         data: [],
-      })
-      return
+      });
+      return;
     }
 
     res.status(200).json({
-      status: 'success',
+      status: "success",
       message: `${updated.length} appointments reassigned.`,
       data: updated,
-    })
-  },
-)
+    });
+  }
+);

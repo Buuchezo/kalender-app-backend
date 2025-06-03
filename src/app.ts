@@ -7,7 +7,7 @@ import morgan from "morgan";
 import userRouter from "./routes/userRoutes";
 import appointmentRouter from "./routes/appointmentRoutes";
 import internalEventsRouter from "./routes/internalEventsRoutes";
-import { AppError } from "../utils/appErrorr";
+import { AppError } from "../src/utils/appErrorr";
 import { errorController } from "./controllers/errorController";
 import helmet from "helmet";
 

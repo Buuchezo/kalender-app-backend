@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "nodemon --watch src --ext ts --exec ts-node src/server.ts",
     "dev:prod": "cross-env NODE_ENV=production nodemon --watch src --ext ts --exec ts-node src/server.ts",
-    "build": "del-cli dist && tsc",
+    "build": "tsc",
     "start": "node dist/server.js"
   },
   "keywords": [],

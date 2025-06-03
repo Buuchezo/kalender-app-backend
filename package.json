@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "nodemon --watch src --ext ts --exec ts-node src/server.ts",
     "dev:prod": "cross-env NODE_ENV=production nodemon --watch src --ext ts --exec ts-node src/server.ts",
-    "build": "rm -rf dist && tsc",
+    "build": "rimraf dist && tsc",
     "start": "node dist/server.js"
   },
   "keywords": [],
@@ -30,6 +30,7 @@
     "cross-env": "^7.0.3",
     "nodemon": "^3.1.10",
     "prettier": "^3.5.3",
+    "rimraf": "^6.0.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3"
   },

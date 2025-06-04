@@ -26,80 +26,61 @@ export async function bookAppointmentMiddleware(
     const formattedStart = normalizeToScheduleXFormat(eventData.start);
     const formattedEnd = normalizeToScheduleXFormat(eventData.end);
 
-    const [existingAppointments, workers] = await Promise.all([
-      AppointmentModel.find({
+    const [workers, slot] = await Promise.all([
+      UserModel.find({ role: "worker" }),
+      AppointmentModel.findOne({
         start: formattedStart,
         end: formattedEnd,
-        title: { $regex: /^Booked Appointment/ },
+        calendarId: "available",
       }),
-      UserModel.find({ role: "worker" }),
     ]);
 
-    const user =
-      eventData.clientId && typeof eventData.clientId === "string"
-        ? await UserModel.findById(eventData.clientId)
-        : null;
-
-    // Determine a free worker who is not yet assigned to this time
-    const usedWorkerIds = existingAppointments.map((a) => a.ownerId);
-    const freeWorker = workers.find((w) => !usedWorkerIds.includes(w.id));
-
-    if (!freeWorker) {
-      // No worker available — delete available slot
-      await AppointmentModel.deleteOne({
-        title: "Available Slot",
-        start: formattedStart,
-        end: formattedEnd,
-        calendarId: "available",
-      });
-
-      return res
-        .status(409)
-        .json({ message: "No available workers for this time slot." });
+    if (!slot) {
+      return res.status(404).json({ message: "No available slot found." });
     }
 
-    // Decrement remaining capacity atomically
-    const updatedSlot = await AppointmentModel.findOneAndUpdate(
-      {
-        title: "Available Slot",
-        start: formattedStart,
-        end: formattedEnd,
-        calendarId: "available",
-        remainingCapacity: { $gt: 0 },
-      },
-      {
-        $inc: { remainingCapacity: -1 },
-      },
-      { new: true }
+    if (slot.remainingCapacity === undefined) {
+      slot.remainingCapacity = workers.length;
+    }
+
+    // Find booked appointments for that time
+    const overlappingBooked = await AppointmentModel.find({
+      start: formattedStart,
+      end: formattedEnd,
+      title: { $regex: "^Booked Appointment" },
+    });
+
+    const bookedWorkerIds = overlappingBooked.map((e) => e.ownerId);
+    const freeWorker = workers.find(
+      (w) => !bookedWorkerIds.includes(w.id || w._id.toString())
     );
 
-    if (!updatedSlot) {
-      return res
-        .status(404)
-        .json({ message: "Matching available slot not found." });
+    if (!freeWorker) {
+      return res.status(409).json({ message: "No available workers left." });
     }
 
-    // Create the booked appointment separately
-    const newAppointment = await AppointmentModel.create({
+    // Create a new Booked Appointment (this is *in addition* to the slot)
+    const booked = await AppointmentModel.create({
       title: `Booked Appointment with ${freeWorker.firstName}`,
       description: eventData.description || "",
       start: formattedStart,
       end: formattedEnd,
       calendarId: "booked",
-      ownerId: freeWorker.id,
+      ownerId: freeWorker.id || freeWorker._id,
       clientId: eventData.clientId ?? `guest-${Date.now()}`,
-      clientName: eventData.clientName ?? user?.firstName ?? "Guest",
+      clientName: eventData.clientName ?? "Guest",
     });
 
-    // If capacity is 0 after update, delete the visible available slot
-    if (
-      updatedSlot?.remainingCapacity !== undefined &&
-      updatedSlot.remainingCapacity <= 0
-    ) {
-      await AppointmentModel.deleteOne({ _id: updatedSlot._id });
+    // Decrease remainingCapacity
+    slot.remainingCapacity -= 1;
+
+    if (slot.remainingCapacity <= 0) {
+      await AppointmentModel.deleteOne({ _id: slot._id });
+    } else {
+      await slot.save();
     }
 
-    req.body.updatedAppointment = newAppointment;
+    req.body.updatedAppointment = booked;
     next();
   } catch (err) {
     console.error("Booking error:", err);

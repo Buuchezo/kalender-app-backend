@@ -41,7 +41,7 @@ export async function conditionalAppointmentHandler(
   res.status(400).json({ message: `Unsupported calendarId: ${calendarId}` })
 }
 
-router.get('/', protect, getAllAppointments)
+router.get('/', getAllAppointments)
 router.get('/:id', getAppointment)
 router.post('/', generateSlotsMiddleware, createAppointment)
 router.patch('/:id', conditionalAppointmentHandler, updateAppointment)

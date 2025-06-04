@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from "express";
 import { AppointmentModel } from "../models/appointmentModel";
 import { catchAsync } from "../utils/catchAsync";
 import { AppError } from "../utils/appErrorr";
+import { endOfMonth, startOfMonth } from "date-fns";
 
 type SanitizedQuery = Record<string, string | string[] | undefined>;
 
@@ -39,10 +40,32 @@ export const getAppointment = catchAsync(
 
 export const createAppointment = catchAsync(
   async (req: Request, res: Response) => {
-    const slots = req.body.slots;
+    const { year, month, slots } = req.body;
+
+    if (typeof year !== "number" || typeof month !== "number") {
+      res.status(400).json({ message: "Year and month are required." });
+      return;
+    }
 
     if (!Array.isArray(slots) || slots.length === 0) {
       res.status(400).json({ message: "No appointment slots to create." });
+      return;
+    }
+
+    const startDate = startOfMonth(new Date(year, month));
+    const endDate = endOfMonth(new Date(year, month));
+
+    const existingAppointments = await AppointmentModel.find({
+      start: { $gte: startDate, $lte: endDate },
+    });
+
+    if (existingAppointments.length > 0) {
+      res.status(200).json({
+        status: "success",
+        message: "Appointments already exist for this month.",
+        results: existingAppointments.length,
+        data: { appointments: existingAppointments },
+      });
       return;
     }
 
@@ -51,7 +74,8 @@ export const createAppointment = catchAsync(
     res.status(201).json({
       status: "success",
       message: `${insertedSlots.length} slots created.`,
-      data: insertedSlots,
+      results: insertedSlots.length,
+      data: { appointments: insertedSlots },
     });
   }
 );

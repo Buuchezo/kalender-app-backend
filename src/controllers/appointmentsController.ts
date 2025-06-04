@@ -57,6 +57,7 @@ export const createAppointment = catchAsync(
 
     const existingAppointments = await AppointmentModel.find({
       start: { $gte: startDate, $lte: endDate },
+      title: "Available Slot", // Only block if Available Slots already exist
     });
 
     if (existingAppointments.length > 0) {

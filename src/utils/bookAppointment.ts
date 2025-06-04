@@ -1,92 +1,113 @@
-
-import { Request, Response, NextFunction } from 'express'
-import { parseISO, format } from 'date-fns'
-import { AppointmentModel } from '../models/appointmentModel'
-import { UserModel } from '../models/userModel'
+import { Request, Response, NextFunction } from "express";
+import { parseISO, format } from "date-fns";
+import { AppointmentModel } from "../models/appointmentModel";
+import { UserModel } from "../models/userModel";
 
 function normalizeToScheduleXFormat(datetime: string): string {
   try {
-    return format(parseISO(datetime), 'yyyy-MM-dd HH:mm')
+    return format(parseISO(datetime), "yyyy-MM-dd HH:mm");
   } catch {
-    return datetime
+    return datetime;
   }
 }
 
-export async function bookAppointmentMiddleware(req: Request, res: Response, next: NextFunction) {
+export async function bookAppointmentMiddleware(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
   try {
-    const { eventData } = req.body
+    const { eventData } = req.body;
 
     if (!eventData || !eventData.start || !eventData.end) {
-      return res.status(400).json({ message: 'Missing required event data.' })
+      return res.status(400).json({ message: "Missing required event data." });
     }
 
-    const formattedStart = normalizeToScheduleXFormat(eventData.start)
-    const formattedEnd = normalizeToScheduleXFormat(eventData.end)
+    const formattedStart = normalizeToScheduleXFormat(eventData.start);
+    const formattedEnd = normalizeToScheduleXFormat(eventData.end);
 
-    const [events, workers] = await Promise.all([
-      AppointmentModel.find(),
-      UserModel.find({ role: 'worker' }),
-    ])
+    // Find the single available slot for this time block
+    const slot = await AppointmentModel.findOne({
+      title: "Available Slot",
+      start: formattedStart,
+      end: formattedEnd,
+      calendarId: "available",
+    });
 
+    if (!slot) {
+      return res.status(404).json({ message: "Time slot not found." });
+    }
+
+    if (!slot.remainingCapacity || slot.remainingCapacity <= 0) {
+      // Slot exists but no capacity
+      await AppointmentModel.deleteOne({ _id: slot._id });
+      return res
+        .status(409)
+        .json({ message: "No available workers for this time slot." });
+    }
+
+    // Find current appointments at this time
+    const overlappingAppointments = await AppointmentModel.find({
+      title: { $regex: "^Booked Appointment" },
+      start: formattedStart,
+      end: formattedEnd,
+    });
+
+    // Find all workers
+    const workers = await UserModel.find({ role: "worker" });
+
+    // Find a free worker
+    const bookedWorkerIds = overlappingAppointments.map((appt) => appt.ownerId);
+    const availableWorker = workers.find(
+      (worker) => !bookedWorkerIds.includes(worker.id)
+    );
+
+    if (!availableWorker) {
+      return res
+        .status(409)
+        .json({ message: "All workers are busy at this time." });
+    }
+
+    // Determine client name if available
     const user =
-      eventData.clientId && typeof eventData.clientId === 'string'
+      eventData.clientId && typeof eventData.clientId === "string"
         ? await UserModel.findById(eventData.clientId)
-        : null
+        : null;
 
-    const overlapping = events.filter(
-      (e) =>
-        e.title?.startsWith('Booked Appointment') &&
-        parseISO(e.start) < parseISO(formattedEnd) &&
-        parseISO(e.end) > parseISO(formattedStart),
-    )
+    // Step 1: Create new booked appointment
+    const booked = await AppointmentModel.create({
+      title: `Booked Appointment with ${availableWorker.firstName}`,
+      start: formattedStart,
+      end: formattedEnd,
+      calendarId: "booked",
+      description: eventData.description || "",
+      ownerId: availableWorker.id,
+      clientId: eventData.clientId ?? `guest-${Date.now()}`,
+      clientName: eventData.clientName ?? user?.firstName ?? "Guest",
+    });
 
-    const freeWorker = workers.find(
-      (worker) => !overlapping.some((appt) => appt.ownerId === worker.id),
-    )
+    // Step 2: Update the slot's remaining capacity
+    const updatedSlot = await AppointmentModel.findByIdAndUpdate(
+      slot._id,
+      { $inc: { remainingCapacity: -1 } },
+      { new: true }
+    );
 
-    if (!freeWorker) {
-      // No worker available — delete the slot so it's no longer bookable
-      await AppointmentModel.findOneAndDelete({
-        title: 'Available Slot',
-        start: formattedStart,
-        end: formattedEnd,
-        calendarId: 'available',
-      })
-
-      return res.status(409).json({ message: 'No available workers for this time slot.' })
+    // Step 3: Delete the slot if capacity is exhausted
+    if (
+      updatedSlot &&
+      typeof updatedSlot.remainingCapacity === "number" &&
+      updatedSlot.remainingCapacity <= 0
+    ) {
+      await AppointmentModel.deleteOne({ _id: slot._id });
     }
 
-    // Worker available — update the slot to booked
-    const updated = await AppointmentModel.findOneAndUpdate(
-      {
-        title: 'Available Slot',
-        start: formattedStart,
-        end: formattedEnd,
-        calendarId: 'available',
-      },
-      {
-        $set: {
-          title: `Booked Appointment with ${freeWorker.firstName}`,
-          calendarId: 'booked',
-          description: eventData.description || '',
-          ownerId: freeWorker.id,
-          clientId: eventData.clientId ?? `guest-${Date.now()}`,
-          clientName: eventData.clientName ?? user?.firstName ?? 'Guest',
-        },
-      },
-      { new: true },
-    )
-
-    if (!updated) {
-      return res.status(404).json({ message: 'Matching available slot not found.' })
-    }
-
-    req.body.updatedAppointment = updated
-    next()
+    req.body.updatedAppointment = booked;
+    next();
   } catch (err) {
-    console.error('Booking error:', err)
+    console.error("Booking error:", err);
     res.status(500).json({
-      message: err instanceof Error ? err.message : 'Internal server error',
-    })
+      message: err instanceof Error ? err.message : "Internal server error",
+    });
   }
 }

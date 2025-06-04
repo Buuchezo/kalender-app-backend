@@ -66,6 +66,7 @@ export function generateSlotsMiddleware(
         start: format(current, "yyyy-MM-dd HH:mm"),
         end: format(slotEnd, "yyyy-MM-dd HH:mm"),
         calendarId: "available",
+        remainingCapacity: 3, // Assuming 3 workers
       });
 
       current = slotEnd;

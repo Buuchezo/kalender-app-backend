@@ -14,6 +14,7 @@ export interface IAppointment extends Document {
   clientName?: string
   sharedWith?: mongoose.Types.ObjectId[]
   visibility?: 'public' | 'internal'
+  remainingCapacity?: number
 }
 
 const appointmentSchema = new Schema<IAppointment>({
@@ -36,6 +37,7 @@ const appointmentSchema = new Schema<IAppointment>({
     enum: ['public', 'internal'],
     default: 'public',
   },
+  remainingCapacity: { type: Number, default: 3 }
 })
 
 //rund before the .save() and .create()

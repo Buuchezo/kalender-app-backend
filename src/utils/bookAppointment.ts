@@ -2,7 +2,14 @@ import { Request, Response, NextFunction } from "express";
 import { parseISO, format } from "date-fns";
 import { AppointmentModel } from "../models/appointmentModel";
 import { UserModel } from "../models/userModel";
+import { IUser } from "../models/userModel";
 import { ObjectId } from "mongodb";
+
+interface AuthenticatedRequest extends Request {
+  user?: IUser;
+}
+
+
 function normalizeToScheduleXFormat(datetime: string): string {
   try {
     return format(parseISO(datetime), "yyyy-MM-dd HH:mm");
@@ -12,7 +19,7 @@ function normalizeToScheduleXFormat(datetime: string): string {
 }
 
 export async function bookAppointmentMiddleware(
-  req: Request,
+  req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ) {
@@ -45,14 +52,27 @@ export async function bookAppointmentMiddleware(
       slot.remainingCapacity = workers.length;
     }
 
-    // Find booked appointments for that time
-    const overlappingBooked = await AppointmentModel.find({
+    // Determine current user and role
+    const user = req.user  ;
+    const isAdmin = user?.role === "admin";
+    const userId = user?.id || user?._id?.toString?.();
+
+    // Fetch booked appointments (filter by user if NOT admin)
+    let overlappingBooked = await AppointmentModel.find({
       start: formattedStart,
       end: formattedEnd,
       title: { $regex: "^Booked Appointment" },
     });
 
+    if (!isAdmin && userId) {
+      overlappingBooked = overlappingBooked.filter(
+        (appointment) =>
+          appointment.clientId?.toString?.() === userId.toString()
+      );
+    }
+
     const bookedWorkerIds = overlappingBooked.map((e) => e.ownerId);
+
     const freeWorker = workers.find((w) => {
       const rawId =
         w.id ||
@@ -72,7 +92,11 @@ export async function bookAppointmentMiddleware(
       return;
     }
 
-    // Create a new Booked Appointment (this is *in addition* to the slot)
+    // Determine who the client is
+    const clientId = userId ?? `guest-${Date.now()}`;
+    const clientName = user?.firstName ?? eventData.clientName ?? "Guest";
+
+    // Create the booked appointment
     const booked = await AppointmentModel.create({
       title: `Booked Appointment with ${freeWorker.firstName}`,
       description: eventData.description || "",
@@ -80,17 +104,26 @@ export async function bookAppointmentMiddleware(
       end: formattedEnd,
       calendarId: "booked",
       ownerId: freeWorker.id || freeWorker._id,
-      clientId: eventData.clientId ?? `guest-${Date.now()}`,
-      clientName: eventData.clientName ?? "Guest",
+      clientId,
+      clientName,
     });
 
-    // Decrease remainingCapacity
-    slot.remainingCapacity -= 1;
+    // Dynamically update remainingCapacity (only reduce for users, not admin overrides)
+    if (!isAdmin) {
+      const allBookedForSlot = await AppointmentModel.find({
+        start: formattedStart,
+        end: formattedEnd,
+        calendarId: "booked",
+      });
 
-    if (slot.remainingCapacity <= 0) {
-      await AppointmentModel.deleteOne({ _id: slot._id });
-    } else {
-      await slot.save();
+      const currentUsed = allBookedForSlot.length;
+      slot.remainingCapacity = workers.length - currentUsed;
+
+      if (slot.remainingCapacity <= 0) {
+        await AppointmentModel.deleteOne({ _id: slot._id });
+      } else {
+        await slot.save();
+      }
     }
 
     req.body.updatedAppointment = booked;

@@ -89,8 +89,8 @@ export const createAppointment = catchAsync(
     // 🟢 Format start and end for frontend/ScheduleX
     const responsePayload = insertedSlots.map((slot) => ({
       ...slot.toObject(),
-      formattedStart: format(slot.start, "yyyy-MM-dd HH:mm"),
-      formattedEnd: format(slot.end, "yyyy-MM-dd HH:mm"),
+      start: format(slot.start, "yyyy-MM-dd HH:mm"),
+      end: format(slot.end, "yyyy-MM-dd HH:mm"),
     }));
 
     res.status(201).json({

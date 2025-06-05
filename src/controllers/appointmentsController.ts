@@ -2,7 +2,7 @@ import { NextFunction, Request, Response } from "express";
 import { AppointmentModel } from "../models/appointmentModel";
 import { catchAsync } from "../utils/catchAsync";
 import { AppError } from "../utils/appError";
-import { endOfMonth, startOfMonth } from "date-fns";
+import { endOfMonth, format, startOfMonth } from "date-fns";
 
 type SanitizedQuery = Record<string, string | string[] | undefined>;
 
@@ -75,22 +75,29 @@ export const createAppointment = catchAsync(
     });
 
     if (uniqueSlots.length === 0) {
-       res.status(200).json({
+      res.status(200).json({
         status: "success",
         message: "All slots already exist for this month.",
         results: 0,
         data: { appointments: existingSlots },
-      })
+      });
       return;
     }
 
-    const insertedSlots = await AppointmentModel.insertMany(uniqueSlots);
+    const insertedSlots = await AppointmentModel.insertMany(slots);
+
+    // 🟢 Format start and end for frontend/ScheduleX
+    const responsePayload = insertedSlots.map((slot) => ({
+      ...slot.toObject(),
+      formattedStart: format(slot.start, "yyyy-MM-dd HH:mm"),
+      formattedEnd: format(slot.end, "yyyy-MM-dd HH:mm"),
+    }));
 
     res.status(201).json({
       status: "success",
-      message: `${insertedSlots.length} new slots created.`,
+      message: `${insertedSlots.length} slots created.`,
       results: insertedSlots.length,
-      data: { appointments: insertedSlots },
+      data: { appointments: responsePayload },
     });
   }
 );

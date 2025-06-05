@@ -90,8 +90,6 @@ export async function generateSlotsMiddleware(
           end: slotEnd, // ✅ stored as Date object
           calendarId: "available",
           remainingCapacity: 3,
-          formattedStart: format(slotStart, "yyyy-MM-dd HH:mm"), // 🟢 for ScheduleX/frontend
-          formattedEnd: format(slotEnd, "yyyy-MM-dd HH:mm"),
         });
 
         current = slotEnd;

@@ -44,7 +44,7 @@ export async function conditionalAppointmentHandler(
 router.get('/', getAllAppointments)
 router.get('/:id', getAppointment)
 router.post('/', generateSlotsMiddleware, createAppointment)
-router.post('/:id', conditionalAppointmentHandler, updateAppointment)
+router.patch('/:id', conditionalAppointmentHandler, updateAppointment)
 router.patch('/reassign/:id', reassignAppointmentsMiddleware, reassignAppointmentsController)
 router.delete('/:id',protect, restrictTo('admin','worker'), deleteAppointment)
 

@@ -55,26 +55,40 @@ export const createAppointment = catchAsync(
     const startDate = startOfMonth(new Date(year, month));
     const endDate = endOfMonth(new Date(year, month));
 
-    const existingAppointments = await AppointmentModel.find({
+    const existingSlots = await AppointmentModel.find({
+      calendarId: "available",
       start: { $gte: startDate, $lte: endDate },
-      title: "Available Slot", // Only block if Available Slots already exist
+    }).select("start end");
+
+    const existingSet = new Set(
+      existingSlots.map(
+        (s) =>
+          `${new Date(s.start).toISOString()}_${new Date(s.end).toISOString()}`
+      )
+    );
+
+    const uniqueSlots = slots.filter((slot) => {
+      const key = `${new Date(slot.start).toISOString()}_${new Date(
+        slot.end
+      ).toISOString()}`;
+      return !existingSet.has(key);
     });
 
-    if (existingAppointments.length > 0) {
-      res.status(200).json({
+    if (uniqueSlots.length === 0) {
+       res.status(200).json({
         status: "success",
-        message: "Appointments already exist for this month.",
-        results: existingAppointments.length,
-        data: { appointments: existingAppointments },
-      });
+        message: "All slots already exist for this month.",
+        results: 0,
+        data: { appointments: existingSlots },
+      })
       return;
     }
 
-    const insertedSlots = await AppointmentModel.insertMany(slots);
+    const insertedSlots = await AppointmentModel.insertMany(uniqueSlots);
 
     res.status(201).json({
       status: "success",
-      message: `${insertedSlots.length} slots created.`,
+      message: `${insertedSlots.length} new slots created.`,
       results: insertedSlots.length,
       data: { appointments: insertedSlots },
     });

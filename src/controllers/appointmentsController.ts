@@ -3,6 +3,7 @@ import { AppointmentModel } from "../models/appointmentModel";
 import { catchAsync } from "../utils/catchAsync";
 import { AppError } from "../utils/appError";
 import { endOfMonth, startOfMonth } from "date-fns";
+import mongoose from "mongoose";
 
 type SanitizedQuery = Record<string, string | string[] | undefined>;
 
@@ -113,60 +114,69 @@ export const createAppointment = catchAsync(
 );
 export const updateAppointment = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const slotId = req.params.id;
+    const appointmentId = req.params.id;
     const eventData = req.body.eventData;
 
-    // 1. Find the appointment
-    const appointment = await AppointmentModel.findById(slotId);
+    // Validate appointment ID
+    if (!mongoose.Types.ObjectId.isValid(appointmentId)) {
+      return next(new AppError("Invalid appointment ID", 400));
+    }
+
+    const appointment = await AppointmentModel.findById(appointmentId);
+
     if (!appointment) {
       return next(new AppError("No appointment found with that ID", 404));
     }
 
-    // 2. Block update if appointment is fully booked
-    if (
-      appointment.remainingCapacity !== undefined &&
-      appointment.remainingCapacity <= 0
-    ) {
-      return next(new AppError("This slot is already fully booked.", 400));
+    // Ensure sharedWith array exists
+    if (!Array.isArray(appointment.sharedWith)) {
+      appointment.sharedWith = [];
     }
 
-    // 3. Decrement capacity
-    if (appointment.remainingCapacity === undefined) {
-      appointment.remainingCapacity = 2; // fallback default
+    // Validate and add clientId to sharedWith if not already present
+    const clientId = eventData.clientId;
+
+    const isValidClientId =
+      clientId && mongoose.Types.ObjectId.isValid(clientId);
+
+    if (
+      isValidClientId &&
+      !appointment.sharedWith.some((id) => id.toString() === clientId)
+    ) {
+      appointment.sharedWith.push(new mongoose.Types.ObjectId(clientId));
+    }
+
+    // Reduce remainingCapacity if available
+    if (typeof appointment.remainingCapacity === "number") {
+      appointment.remainingCapacity = Math.max(
+        0,
+        appointment.remainingCapacity - 1
+      );
     } else {
-      appointment.remainingCapacity -= 1;
+      appointment.remainingCapacity = 0;
     }
 
-    // 4. Add client info
-    if (eventData.clientId) {
-      appointment.clientId = eventData.clientId;
-      appointment.clientName = eventData.clientName || "Unknown";
-    }
-
-    // Optional: track shared clients
-    if (
-      eventData.clientId &&
-      !appointment.sharedWith?.includes(eventData.clientId)
-    ) {
-      appointment.sharedWith?.push(eventData.clientId);
-    }
-
-    // 5. Set title and calendar state
-    appointment.title = "Booked Appointment";
-    appointment.description = eventData.description || appointment.description;
-
-    // If no remaining capacity, lock it
-    if (appointment.remainingCapacity <= 0) {
+    // If capacity reached, mark it as booked
+    if (appointment.remainingCapacity === 0) {
       appointment.calendarId = "booked";
     }
 
-    // 6. Save and respond
-    await appointment.save();
+    // Update other fields
+    appointment.title = eventData.title || "Booked Appointment";
+    appointment.description = eventData.description || "";
+    appointment.clientId = isValidClientId
+      ? new mongoose.Types.ObjectId(clientId)
+      : undefined;
+    appointment.clientName = eventData.clientName || "Unknown";
+    appointment.start = eventData.start;
+    appointment.end = eventData.end;
+
+    const updatedAppointment = await appointment.save();
 
     res.status(200).json({
       status: "success",
       data: {
-        appointment,
+        appointment: updatedAppointment,
       },
     });
   }

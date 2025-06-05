@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { parseISO, format } from "date-fns";
 import { AppointmentModel } from "../models/appointmentModel";
 import { UserModel } from "../models/userModel";
-
+import { ObjectId } from "mongodb";
 function normalizeToScheduleXFormat(datetime: string): string {
   try {
     return format(parseISO(datetime), "yyyy-MM-dd HH:mm");
@@ -20,7 +20,8 @@ export async function bookAppointmentMiddleware(
     const { eventData } = req.body;
 
     if (!eventData || !eventData.start || !eventData.end) {
-      return res.status(400).json({ message: "Missing required event data." });
+      res.status(400).json({ message: "Missing required event data." });
+      return;
     }
 
     const formattedStart = normalizeToScheduleXFormat(eventData.start);
@@ -36,7 +37,8 @@ export async function bookAppointmentMiddleware(
     ]);
 
     if (!slot) {
-      return res.status(404).json({ message: "No available slot found." });
+      res.status(404).json({ message: "No available slot found." });
+      return;
     }
 
     if (slot.remainingCapacity === undefined) {
@@ -51,12 +53,23 @@ export async function bookAppointmentMiddleware(
     });
 
     const bookedWorkerIds = overlappingBooked.map((e) => e.ownerId);
-    const freeWorker = workers.find(
-      (w) => !bookedWorkerIds.includes(w.id || w._id.toString())
-    );
+    const freeWorker = workers.find((w) => {
+      const rawId =
+        w.id ||
+        (typeof w._id === "object" && w._id !== null && "toString" in w._id
+          ? (w._id as { toString: () => string }).toString()
+          : null);
+
+      if (!rawId || !ObjectId.isValid(rawId)) return false;
+
+      const objectId = new ObjectId(rawId);
+
+      return !bookedWorkerIds.includes(objectId);
+    });
 
     if (!freeWorker) {
-      return res.status(409).json({ message: "No available workers left." });
+      res.status(409).json({ message: "No available workers left." });
+      return;
     }
 
     // Create a new Booked Appointment (this is *in addition* to the slot)

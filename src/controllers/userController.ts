@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response } from 'express'
 import { UserModel } from '../models/userModel'
 import { catchAsync } from '../utils/catchAsync'
-import { AppError } from '../utils/appErrorr'
+import { AppError } from '../utils/appError'
 import { AuthenticatedRequest } from './authenticationController'
 
 const filterObj = <T extends object, K extends keyof T>(

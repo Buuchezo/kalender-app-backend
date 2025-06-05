@@ -113,48 +113,61 @@ export const createAppointment = catchAsync(
 );
 export const updateAppointment = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const { id } = req.params;
-    const { eventData } = req.body;
+    const slotId = req.params.id;
+    const eventData = req.body.eventData;
 
-    const appointment = await AppointmentModel.findById(id);
-
+    // 1. Find the appointment
+    const appointment = await AppointmentModel.findById(slotId);
     if (!appointment) {
-      return next(new AppError("No appointment found with that id", 404));
+      return next(new AppError("No appointment found with that ID", 404));
     }
 
-    const currentCapacity = appointment.remainingCapacity ?? 0;
-
-    if (currentCapacity <= 0) {
-      return next(new AppError("This slot is fully booked", 400));
+    // 2. Block update if appointment is fully booked
+    if (
+      appointment.remainingCapacity !== undefined &&
+      appointment.remainingCapacity <= 0
+    ) {
+      return next(new AppError("This slot is already fully booked.", 400));
     }
 
-    const isBooking =
-      eventData.calendarId === "booked" ||
-      eventData.title === "Booked Appointment";
-
-    if (isBooking) {
-      appointment.remainingCapacity = currentCapacity - 1;
-
-      appointment.clientId = eventData.clientId || appointment.clientId;
-      appointment.clientName = eventData.clientName || appointment.clientName;
-      appointment.description =
-        eventData.description || appointment.description;
-      appointment.title = "Booked Appointment";
-
-      if (appointment.remainingCapacity <= 0) {
-        appointment.calendarId = "booked";
-      }
+    // 3. Decrement capacity
+    if (appointment.remainingCapacity === undefined) {
+      appointment.remainingCapacity = 2; // fallback default
+    } else {
+      appointment.remainingCapacity -= 1;
     }
 
-    // Allow optional updates to start/end
-    if (eventData.start) appointment.start = eventData.start;
-    if (eventData.end) appointment.end = eventData.end;
+    // 4. Add client info
+    if (eventData.clientId) {
+      appointment.clientId = eventData.clientId;
+      appointment.clientName = eventData.clientName || "Unknown";
+    }
 
+    // Optional: track shared clients
+    if (
+      eventData.clientId &&
+      !appointment.sharedWith?.includes(eventData.clientId)
+    ) {
+      appointment.sharedWith?.push(eventData.clientId);
+    }
+
+    // 5. Set title and calendar state
+    appointment.title = "Booked Appointment";
+    appointment.description = eventData.description || appointment.description;
+
+    // If no remaining capacity, lock it
+    if (appointment.remainingCapacity <= 0) {
+      appointment.calendarId = "booked";
+    }
+
+    // 6. Save and respond
     await appointment.save();
 
     res.status(200).json({
       status: "success",
-      data: { appointment },
+      data: {
+        appointment,
+      },
     });
   }
 );

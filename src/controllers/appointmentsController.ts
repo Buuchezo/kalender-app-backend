@@ -2,20 +2,51 @@ import { NextFunction, Request, Response } from "express";
 import { AppointmentModel } from "../models/appointmentModel";
 import { catchAsync } from "../utils/catchAsync";
 import { AppError } from "../utils/appError";
-import { endOfMonth, format, startOfMonth } from "date-fns";
+import { endOfMonth, startOfMonth } from "date-fns";
 
 type SanitizedQuery = Record<string, string | string[] | undefined>;
 
 export const getAllAppointments = catchAsync(
   async (req: Request & { sanitizedQuery?: SanitizedQuery }, res: Response) => {
-    const query = req.sanitizedQuery ?? req.query;
-    const appointments = await AppointmentModel.find(query);
+    const queryParams = req.sanitizedQuery ?? req.query;
+    const mongoQuery: Record<string, any> = {};
+
+    // Optional: Filter by year/month if provided
+    const year = queryParams.year
+      ? parseInt(queryParams.year as string, 10)
+      : undefined;
+    const month = queryParams.month
+      ? parseInt(queryParams.month as string, 10)
+      : undefined;
+
+    if ((year && isNaN(year)) || (month && isNaN(month))) {
+      res.status(400).json({
+        status: "fail",
+        message: "Invalid 'year' or 'month' query parameter.",
+      });
+      return;
+    }
+
+    if (year !== undefined && month !== undefined) {
+      const startDate = startOfMonth(new Date(year, month));
+      const endDate = endOfMonth(startDate);
+      mongoQuery.start = { $gte: startDate, $lte: endDate };
+    }
+
+    // Copy other filters (e.g., calendarId, title, clientId, etc.)
+    const ignoredKeys = ["year", "month"];
+    for (const key in queryParams) {
+      if (!ignoredKeys.includes(key) && queryParams[key] !== undefined) {
+        mongoQuery[key] = queryParams[key];
+      }
+    }
+
+    const appointments = await AppointmentModel.find(mongoQuery);
+
     res.status(200).json({
       status: "success",
       results: appointments.length,
-      data: {
-        appointments,
-      },
+      data: { appointments },
     });
   }
 );
@@ -55,49 +86,28 @@ export const createAppointment = catchAsync(
     const startDate = startOfMonth(new Date(year, month));
     const endDate = endOfMonth(new Date(year, month));
 
-    const existingSlots = await AppointmentModel.find({
-      calendarId: "available",
+    const existingAppointments = await AppointmentModel.find({
       start: { $gte: startDate, $lte: endDate },
-    }).select("start end");
-
-    const existingSet = new Set(
-      existingSlots.map(
-        (s) =>
-          `${new Date(s.start).toISOString()}_${new Date(s.end).toISOString()}`
-      )
-    );
-
-    const uniqueSlots = slots.filter((slot) => {
-      const key = `${new Date(slot.start).toISOString()}_${new Date(
-        slot.end
-      ).toISOString()}`;
-      return !existingSet.has(key);
+      title: "Available Slot", // Only block if Available Slots already exist
     });
 
-    if (uniqueSlots.length === 0) {
+    if (existingAppointments.length > 0) {
       res.status(200).json({
         status: "success",
-        message: "All slots already exist for this month.",
-        results: 0,
-        data: { appointments: existingSlots },
+        message: "Appointments already exist for this month.",
+        results: existingAppointments.length,
+        data: { appointments: existingAppointments },
       });
       return;
     }
 
     const insertedSlots = await AppointmentModel.insertMany(slots);
 
-    // 🟢 Format start and end for frontend/ScheduleX
-    const responsePayload = insertedSlots.map((slot) => ({
-      ...slot.toObject(),
-      start: format(slot.start, "yyyy-MM-dd HH:mm"),
-      end: format(slot.end, "yyyy-MM-dd HH:mm"),
-    }));
-
     res.status(201).json({
       status: "success",
       message: `${insertedSlots.length} slots created.`,
       results: insertedSlots.length,
-      data: { appointments: responsePayload },
+      data: { appointments: insertedSlots },
     });
   }
 );

@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { parseISO, format } from "date-fns";
+import { parseISO, format, addMinutes } from "date-fns";
 import { AppointmentModel } from "../models/appointmentModel";
 import { UserModel } from "../models/userModel";
 import { IUser } from "../models/userModel";
@@ -8,7 +8,6 @@ import { ObjectId } from "mongodb";
 interface AuthenticatedRequest extends Request {
   user?: IUser;
 }
-
 
 function normalizeToScheduleXFormat(datetime: string): string {
   try {
@@ -26,107 +25,105 @@ export async function bookAppointmentMiddleware(
   try {
     const { eventData } = req.body;
 
-    if (!eventData || !eventData.start || !eventData.end) {
-      res.status(400).json({ message: "Missing required event data." });
-      return;
+    if (!eventData || !eventData.id || !eventData.start || !eventData.end) {
+      return res.status(400).json({ message: "Missing required event data." });
     }
 
     const formattedStart = normalizeToScheduleXFormat(eventData.start);
     const formattedEnd = normalizeToScheduleXFormat(eventData.end);
 
-    const [workers, slot] = await Promise.all([
-      UserModel.find({ role: "worker" }),
-      AppointmentModel.findOne({
-        start: formattedStart,
-        end: formattedEnd,
-        calendarId: "available",
-      }),
-    ]);
-
-    if (!slot) {
-      res.status(404).json({ message: "No available slot found." });
-      return;
+    const original = await AppointmentModel.findById(eventData.id);
+    if (!original) {
+      return res
+        .status(404)
+        .json({ message: "Original appointment not found." });
     }
 
-    if (slot.remainingCapacity === undefined) {
-      slot.remainingCapacity = workers.length;
-    }
+    const originalStart = parseISO(original.start);
+    const originalEnd = parseISO(original.end);
+    const newStart = parseISO(formattedStart);
+    const newEnd = parseISO(formattedEnd);
 
-    // Determine current user and role
-    const user = req.user  ;
-    const isAdmin = user?.role === "admin";
-    const userId = user?.id || user?._id?.toString?.();
-
-    // Fetch booked appointments (filter by user if NOT admin)
-    let overlappingBooked = await AppointmentModel.find({
-      start: formattedStart,
-      end: formattedEnd,
-      title: { $regex: "^Booked Appointment" },
+    // Remove overlapping available slots
+    await AppointmentModel.deleteMany({
+      title: "Available Slot",
+      $or: [
+        {
+          start: { $gte: formattedStart, $lt: formattedEnd },
+        },
+        {
+          end: { $gt: formattedStart, $lte: formattedEnd },
+        },
+      ],
     });
 
-    if (!isAdmin && userId) {
-      overlappingBooked = overlappingBooked.filter(
-        (appointment) =>
-          appointment.clientId?.toString?.() === userId.toString()
-      );
-    }
+    // Get the original assigned worker
+    const workers = await UserModel.find({ role: "worker" });
+    const assignedWorker = workers.find(
+      (w) =>
+        w.id?.toString?.() === original.ownerId?.toString?.() ||
+        w._id?.toString?.() === original.ownerId?.toString?.()
+    );
 
-    const bookedWorkerIds = overlappingBooked.map((e) => e.ownerId);
+    const dynamicTitle = assignedWorker
+      ? `Booked Appointment with ${assignedWorker.firstName}`
+      : "Booked Appointment";
 
-    const freeWorker = workers.find((w) => {
-      const rawId =
-        w.id ||
-        (typeof w._id === "object" && w._id !== null && "toString" in w._id
-          ? (w._id as { toString: () => string }).toString()
-          : null);
+    // Update the appointment
+    original.title = dynamicTitle;
+    original.description = eventData.description || "";
+    original.start = formattedStart;
+    original.end = formattedEnd;
+    original.calendarId = "booked";
+    original.clientName =
+      eventData.clientName ?? original.clientName ?? "Guest";
 
-      if (!rawId || !ObjectId.isValid(rawId)) return false;
+    await original.save();
 
-      const objectId = new ObjectId(rawId);
+    // Generate available slots to fill any gaps
+    const idSeedStart = Date.now() + 1;
 
-      return !bookedWorkerIds.includes(objectId);
-    });
+    const generateAvailableSlotsBetween = (
+      start: Date,
+      end: Date,
+      idSeed: number
+    ) => {
+      const slots: any[] = [];
+      let current = new Date(start);
 
-    if (!freeWorker) {
-      res.status(409).json({ message: "No available workers left." });
-      return;
-    }
-
-    // Determine who the client is
-    const clientId = userId ?? `guest-${Date.now()}`;
-    const clientName = user?.firstName ?? eventData.clientName ?? "Guest";
-
-    // Create the booked appointment
-    const booked = await AppointmentModel.create({
-      title: `Booked Appointment with ${freeWorker.firstName}`,
-      description: eventData.description || "",
-      start: formattedStart,
-      end: formattedEnd,
-      calendarId: "booked",
-      ownerId: freeWorker.id || freeWorker._id,
-      clientId,
-      clientName,
-    });
-
-    // Dynamically update remainingCapacity (only reduce for users, not admin overrides)
-    if (!isAdmin) {
-      const allBookedForSlot = await AppointmentModel.find({
-        start: formattedStart,
-        end: formattedEnd,
-        calendarId: "booked",
-      });
-
-      const currentUsed = allBookedForSlot.length;
-      slot.remainingCapacity = workers.length - currentUsed;
-
-      if (slot.remainingCapacity <= 0) {
-        await AppointmentModel.deleteOne({ _id: slot._id });
-      } else {
-        await slot.save();
+      while (addMinutes(current, 60) <= end) {
+        const slotEnd = addMinutes(current, 60);
+        if (slotEnd <= end) {
+          slots.push({
+            id: idSeed++,
+            title: "Available Slot",
+            description: "",
+            start: normalizeToScheduleXFormat(current.toISOString()),
+            end: normalizeToScheduleXFormat(slotEnd.toISOString()),
+            calendarId: "available",
+          });
+        }
+        current = slotEnd;
       }
+
+      return { slots, nextId: idSeed };
+    };
+
+    const { slots: beforeSlots, nextId: idAfterBefore } =
+      generateAvailableSlotsBetween(originalStart, newStart, idSeedStart);
+
+    const { slots: afterSlots } = generateAvailableSlotsBetween(
+      newEnd,
+      originalEnd,
+      idAfterBefore
+    );
+
+    const allSlots = [...beforeSlots, ...afterSlots];
+    if (allSlots.length > 0) {
+      await AppointmentModel.insertMany(allSlots);
     }
 
-    req.body.updatedAppointment = booked;
+    req.body.updatedAppointment = original;
     next();
   } catch (err) {
     console.error("Booking error:", err);

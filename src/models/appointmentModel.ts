@@ -28,8 +28,8 @@ const appointmentSchema = new Schema<IAppointment>({
     enum: ["available", "booked"],
     default: "available",
   },
-  ownerId: { type: Schema.Types.ObjectId, ref: "User" },
-  clientId: { type: Schema.Types.ObjectId, ref: "User" },
+  ownerId: { type: Schema.Types.Mixed, ref: "User" },
+  clientId: { type: Schema.Types.Mixed, ref: "User" },
   clientName: { type: String },
   sharedWith: [
     {

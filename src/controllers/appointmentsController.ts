@@ -113,18 +113,44 @@ export const createAppointment = catchAsync(
 );
 export const updateAppointment = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const appointment = await AppointmentModel.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      {
-        new: true,
-        runValidators: true,
-      }
-    );
+    const { id } = req.params;
+    const { eventData } = req.body;
+
+    const appointment = await AppointmentModel.findById(id);
 
     if (!appointment) {
       return next(new AppError("No appointment found with that id", 404));
     }
+
+    const currentCapacity = appointment.remainingCapacity ?? 0;
+
+    if (currentCapacity <= 0) {
+      return next(new AppError("This slot is fully booked", 400));
+    }
+
+    const isBooking =
+      eventData.calendarId === "booked" ||
+      eventData.title === "Booked Appointment";
+
+    if (isBooking) {
+      appointment.remainingCapacity = currentCapacity - 1;
+
+      appointment.clientId = eventData.clientId || appointment.clientId;
+      appointment.clientName = eventData.clientName || appointment.clientName;
+      appointment.description =
+        eventData.description || appointment.description;
+      appointment.title = "Booked Appointment";
+
+      if (appointment.remainingCapacity <= 0) {
+        appointment.calendarId = "booked";
+      }
+    }
+
+    // Allow optional updates to start/end
+    if (eventData.start) appointment.start = eventData.start;
+    if (eventData.end) appointment.end = eventData.end;
+
+    await appointment.save();
 
     res.status(200).json({
       status: "success",

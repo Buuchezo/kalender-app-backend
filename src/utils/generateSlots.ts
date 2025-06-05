@@ -70,7 +70,7 @@ export async function generateSlotsMiddleware(
         startHour = 9;
         endHour = 13;
       } else {
-        // Sunday - no slots
+        // Sunday - skip
         continue;
       }
 
@@ -80,22 +80,24 @@ export async function generateSlotsMiddleware(
       end.setHours(endHour, 0, 0, 0);
 
       while (current < end) {
-        const slotEnd = addMinutes(current, 60);
+        const slotStart = new Date(current);
+        const slotEnd = addMinutes(slotStart, 60);
 
         slots.push({
           title: "Available Slot",
           description: "",
-          start: format(current, "yyyy-MM-dd HH:mm"),
-          end: format(slotEnd, "yyyy-MM-dd HH:mm"),
+          start: slotStart, // ✅ stored as Date object
+          end: slotEnd, // ✅ stored as Date object
           calendarId: "available",
-          remainingCapacity: 3, // You can fetch workers.length dynamically if needed
+          remainingCapacity: 3,
+          formattedStart: format(slotStart, "yyyy-MM-dd HH:mm"), // 🟢 for ScheduleX/frontend
+          formattedEnd: format(slotEnd, "yyyy-MM-dd HH:mm"),
         });
 
         current = slotEnd;
       }
     }
 
-    // Attach to request for later saving in controller
     req.body.slots = slots;
     next();
   } catch (err) {

@@ -120,7 +120,7 @@ export const updateAppointment = catchAsync(async (req, res, next) => {
     return next(new AppError("Invalid appointment ID", 400));
   }
 
-  // Use updated appointment from middleware if available
+  // Use updated appointment from booking middleware if present
   let appointment = req.body.updatedAppointment;
 
   if (!appointment) {
@@ -131,14 +131,13 @@ export const updateAppointment = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Ensure sharedWith array exists
+  // Ensure sharedWith array exists and update safely
   if (!Array.isArray(appointment.sharedWith)) {
     appointment.sharedWith = [];
   }
 
   const clientId = eventData.clientId;
 
-  // Helper to safely convert clientId to ObjectId or undefined
   const safeObjectId = (id: any): mongoose.Types.ObjectId | undefined => {
     if (typeof id === "string" && mongoose.Types.ObjectId.isValid(id)) {
       return new mongoose.Types.ObjectId(id);
@@ -158,17 +157,15 @@ export const updateAppointment = catchAsync(async (req, res, next) => {
     appointment.sharedWith.push(clientObjectId);
   }
 
-  // Update other fields safely
+  // Update main slot fields, but NOT clientId/clientName since bookings array is source of truth
   appointment.title =
     eventData.title || appointment.title || "Booked Appointment";
   appointment.description =
     eventData.description || appointment.description || "";
-  appointment.clientId = clientObjectId || appointment.clientId;
-  appointment.clientName =
-    eventData.clientName || appointment.clientName || "Unknown";
   appointment.start = eventData.start || appointment.start;
   appointment.end = eventData.end || appointment.end;
 
+  // Save updated appointment slot
   const updatedAppointment = await appointment.save();
 
   res.status(200).json({

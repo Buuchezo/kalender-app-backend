@@ -9,6 +9,16 @@ import { Types } from "mongoose";
 interface AuthenticatedRequest extends Request {
   user?: IUser;
 }
+
+function getValidOwnerId(id: unknown): string | Types.ObjectId {
+  if (typeof id === "string" && Types.ObjectId.isValid(id)) {
+    return new Types.ObjectId(id);
+  }
+  if (id instanceof Types.ObjectId) {
+    return id;
+  }
+  throw new Error("Invalid ownerId");
+}
 function normalizeToScheduleXFormat(datetime: string): string {
   try {
     return format(parseISO(datetime), "yyyy-MM-dd HH:mm");
@@ -240,15 +250,12 @@ export async function bookAppointmentMiddleware(
     const parsedStart = parseISO(formattedStart);
     const parsedEnd = parseISO(formattedEnd);
 
+    // Get all workers and all overlapping slots
     const [workers, allAppointments] = await Promise.all([
       UserModel.find({ role: "worker" }),
       AppointmentModel.find({
-        $or: [
-          {
-            start: { $lt: formattedEnd },
-            end: { $gt: formattedStart },
-          },
-        ],
+        start: { $lt: formattedEnd },
+        end: { $gt: formattedStart },
       }),
     ]);
 
@@ -256,99 +263,77 @@ export async function bookAppointmentMiddleware(
       return res.status(404).json({ message: "No workers found." });
     }
 
-    const overlappingSlots = allAppointments.filter((slot) => {
-      if (slot.calendarId !== "booked" && slot.calendarId !== "available")
-        return false;
-      const slotStart = parseISO(normalizeToScheduleXFormat(slot.start));
-      const slotEnd = parseISO(normalizeToScheduleXFormat(slot.end));
-      return isBefore(parsedStart, slotEnd) && isAfter(parsedEnd, slotStart);
-    });
-
+    // Find the exact slot to book
     const targetSlot = allAppointments.find(
       (slot) =>
-        slot.calendarId === "available" &&
         normalizeToScheduleXFormat(slot.start) === formattedStart &&
-        normalizeToScheduleXFormat(slot.end) === formattedEnd
+        normalizeToScheduleXFormat(slot.end) === formattedEnd &&
+        slot.calendarId === "available"
     );
 
     if (!targetSlot) {
-      return res
-        .status(404)
-        .json({ message: "No available slot found for requested time." });
+      return res.status(404).json({ message: "No available slot found." });
+    }
+
+    // Initialize bookings array if missing
+    if (!Array.isArray(targetSlot.bookings)) {
+      targetSlot.bookings = [];
     }
 
     if (typeof targetSlot.remainingCapacity !== "number") {
       targetSlot.remainingCapacity = workers.length;
     }
 
-    const user = req.user;
-
+    // Validate clientId from eventData or user
     let clientIdObj: Types.ObjectId | undefined;
     if (eventData.clientId && Types.ObjectId.isValid(eventData.clientId)) {
       clientIdObj = new Types.ObjectId(eventData.clientId);
-    } else if (user?.id && Types.ObjectId.isValid(user.id)) {
-      clientIdObj = new Types.ObjectId(user.id);
+    } else if (req.user?.id && Types.ObjectId.isValid(req.user.id)) {
+      clientIdObj = new Types.ObjectId(req.user.id);
     } else {
       return res.status(400).json({ message: "Invalid or missing client ID." });
     }
 
-    if (!Array.isArray(targetSlot.bookings)) {
-      targetSlot.bookings = [];
+    // Check if client already booked this slot (prevent duplicates)
+    const alreadyBooked = targetSlot.bookings.some(
+      (b) => b.clientId?.toString() === clientIdObj?.toString()
+    );
+    if (alreadyBooked) {
+      return res.status(409).json({ message: "You already booked this slot." });
     }
 
-    const userAlreadyBooked = overlappingSlots.some(
-      (slot) =>
-        Array.isArray(slot.bookings) &&
-        slot.bookings.some(
-          (b) => b.clientId?.toString() === clientIdObj?.toString()
-        )
+    // Find which workers are already booked in this slot
+    const bookedWorkerIds = targetSlot.bookings.map((b) =>
+      b.ownerId?.toString()
     );
 
-    if (userAlreadyBooked) {
-      return res.status(409).json({
-        message: "You have already booked an overlapping appointment.",
-      });
-    }
-
-    const bookedWorkerIds = overlappingSlots
-      .flatMap((slot) => slot.bookings || [])
-      .map((b) => b.ownerId?.toString())
-      .filter(Boolean);
-
-    const freeWorkerRaw = workers.find(
+    // Find a free worker for this booking
+    const freeWorker = workers.find(
       (w) => w._id && !bookedWorkerIds.includes(w._id.toString())
     );
 
-    if (!freeWorkerRaw) {
+    if (!freeWorker) {
       return res
         .status(409)
-        .json({ message: "No available workers left for this time." });
+        .json({ message: "No available workers left for this slot." });
     }
 
-    const ownerId =
-      freeWorkerRaw._id instanceof Types.ObjectId
-        ? freeWorkerRaw._id
-        : typeof freeWorkerRaw._id === "string" &&
-            Types.ObjectId.isValid(freeWorkerRaw._id)
-          ? new Types.ObjectId(freeWorkerRaw._id)
-          : undefined;
+    const ownerId = getValidOwnerId(freeWorker._id);
 
-    if (!ownerId) {
-      return res.status(500).json({ message: "Invalid worker ID" });
-    }
-
-    const clientName = user?.firstName ?? eventData.clientName ?? "Guest";
-
+    // Add the mini appointment booking
     targetSlot.bookings.push({
       ownerId,
       clientId: clientIdObj,
-      clientName,
+      clientName: eventData.clientName || req.user?.firstName || "Guest",
       description: eventData.description || "",
+      start: formattedStart,
+      end: formattedEnd,
     });
 
-    // Capacity decrement and status update done only here
+    // Decrement capacity
     targetSlot.remainingCapacity -= 1;
 
+    // If fully booked, update calendarId and title accordingly
     if (targetSlot.remainingCapacity <= 0) {
       targetSlot.calendarId = "booked";
       targetSlot.title = "Fully Booked";
@@ -359,6 +344,7 @@ export async function bookAppointmentMiddleware(
 
     await targetSlot.save();
 
+    // Attach updated slot for next handler
     req.body.updatedAppointment = targetSlot;
 
     next();

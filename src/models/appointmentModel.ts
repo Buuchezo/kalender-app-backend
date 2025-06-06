@@ -8,6 +8,8 @@ export interface IBooking {
   clientName: string;
   description?: string;
   workerName?: string;
+  start?: string; // add these if you want
+  end?: string;
 }
 export interface IAppointment extends Document {
   slug: string;

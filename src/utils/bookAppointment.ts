@@ -346,6 +346,7 @@ export async function bookAppointmentMiddleware(
       description: eventData.description || "",
     });
 
+    // Capacity decrement and status update done only here
     targetSlot.remainingCapacity -= 1;
 
     if (targetSlot.remainingCapacity <= 0) {
@@ -357,13 +358,6 @@ export async function bookAppointmentMiddleware(
     }
 
     await targetSlot.save();
-
-    // Debug log to verify updates
-    console.log("Slot updated:", {
-      calendarId: targetSlot.calendarId,
-      remainingCapacity: targetSlot.remainingCapacity,
-      title: targetSlot.title,
-    });
 
     req.body.updatedAppointment = targetSlot;
 

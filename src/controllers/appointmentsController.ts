@@ -112,75 +112,72 @@ export const createAppointment = catchAsync(
     });
   }
 );
-export const updateAppointment = catchAsync(
-  async (req: Request, res: Response, next: NextFunction) => {
-    const appointmentId = req.params.id;
-    const eventData = req.body.eventData;
+export const updateAppointment = catchAsync(async (req, res, next) => {
+  const appointmentId = req.params.id;
+  const eventData = req.body.eventData;
 
-    // Validate appointment ID
-    if (!mongoose.Types.ObjectId.isValid(appointmentId)) {
-      return next(new AppError("Invalid appointment ID", 400));
-    }
+  if (!mongoose.Types.ObjectId.isValid(appointmentId)) {
+    return next(new AppError("Invalid appointment ID", 400));
+  }
 
-    const appointment = await AppointmentModel.findById(appointmentId);
+  // Use updated appointment from middleware if available
+  let appointment = req.body.updatedAppointment;
+
+  if (!appointment) {
+    appointment = await AppointmentModel.findById(appointmentId);
 
     if (!appointment) {
       return next(new AppError("No appointment found with that ID", 404));
     }
-
-    // Ensure sharedWith array exists
-    if (!Array.isArray(appointment.sharedWith)) {
-      appointment.sharedWith = [];
-    }
-
-    // Validate and add clientId to sharedWith if not already present
-    const clientId = eventData.clientId;
-
-    const isValidClientId =
-      clientId && mongoose.Types.ObjectId.isValid(clientId);
-
-    if (
-      isValidClientId &&
-      !appointment.sharedWith.some((id) => id.toString() === clientId)
-    ) {
-      appointment.sharedWith.push(new mongoose.Types.ObjectId(clientId));
-    }
-
-    // Reduce remainingCapacity if available
-    if (typeof appointment.remainingCapacity === "number") {
-      appointment.remainingCapacity = Math.max(
-        0,
-        appointment.remainingCapacity - 1
-      );
-    } else {
-      appointment.remainingCapacity = 0;
-    }
-
-    // If capacity reached, mark it as booked
-    if (appointment.remainingCapacity === 0) {
-      appointment.calendarId = "booked";
-    }
-
-    // Update other fields
-    appointment.title = eventData.title || "Booked Appointment";
-    appointment.description = eventData.description || "";
-    appointment.clientId = isValidClientId
-      ? new mongoose.Types.ObjectId(clientId)
-      : undefined;
-    appointment.clientName = eventData.clientName || "Unknown";
-    appointment.start = eventData.start;
-    appointment.end = eventData.end;
-
-    const updatedAppointment = await appointment.save();
-
-    res.status(200).json({
-      status: "success",
-      data: {
-        appointment: updatedAppointment,
-      },
-    });
   }
-);
+
+  // Ensure sharedWith array exists
+  if (!Array.isArray(appointment.sharedWith)) {
+    appointment.sharedWith = [];
+  }
+
+  const clientId = eventData.clientId;
+
+  // Helper to safely convert clientId to ObjectId or undefined
+  const safeObjectId = (id: any): mongoose.Types.ObjectId | undefined => {
+    if (typeof id === "string" && mongoose.Types.ObjectId.isValid(id)) {
+      return new mongoose.Types.ObjectId(id);
+    }
+    return undefined;
+  };
+
+  const clientObjectId = safeObjectId(clientId);
+
+  if (
+    clientObjectId &&
+    !appointment.sharedWith.some(
+      (id: mongoose.Types.ObjectId | string) =>
+        id.toString() === clientObjectId.toString()
+    )
+  ) {
+    appointment.sharedWith.push(clientObjectId);
+  }
+
+  // Update other fields safely
+  appointment.title =
+    eventData.title || appointment.title || "Booked Appointment";
+  appointment.description =
+    eventData.description || appointment.description || "";
+  appointment.clientId = clientObjectId || appointment.clientId;
+  appointment.clientName =
+    eventData.clientName || appointment.clientName || "Unknown";
+  appointment.start = eventData.start || appointment.start;
+  appointment.end = eventData.end || appointment.end;
+
+  const updatedAppointment = await appointment.save();
+
+  res.status(200).json({
+    status: "success",
+    data: {
+      appointment: updatedAppointment,
+    },
+  });
+});
 
 export const deleteAppointment = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {

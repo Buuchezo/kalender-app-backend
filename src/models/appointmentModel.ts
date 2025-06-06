@@ -1,7 +1,13 @@
-import mongoose, { Schema, Document } from "mongoose";
+import mongoose, { Schema, Document, Types } from "mongoose";
 import slugify from "slugify";
 
 // Interface to type the User document
+export interface IBooking {
+  ownerId: string | Types.ObjectId;
+  clientId: string | Types.ObjectId;
+  clientName: string;
+  description?: string;
+}
 export interface IAppointment extends Document {
   slug: string;
   title: string;
@@ -15,6 +21,7 @@ export interface IAppointment extends Document {
   sharedWith?: mongoose.Types.ObjectId[];
   visibility?: "public" | "internal";
   remainingCapacity?: number;
+  bookings?: IBooking[];
 }
 
 const appointmentSchema = new Schema<IAppointment>({
@@ -28,8 +35,8 @@ const appointmentSchema = new Schema<IAppointment>({
     enum: ["available", "booked"],
     default: "available",
   },
-  ownerId: { type: Schema.Types.Mixed, ref: "User" },
-  clientId: { type: Schema.Types.Mixed, ref: "User" },
+  ownerId: { type: Schema.Types.Mixed, ref: "User" }, // kept for legacy use
+  clientId: { type: Schema.Types.Mixed, ref: "User" }, // kept for legacy use
   clientName: { type: String },
   sharedWith: [
     {
@@ -43,6 +50,16 @@ const appointmentSchema = new Schema<IAppointment>({
     default: "public",
   },
   remainingCapacity: { type: Number, default: 3 },
+
+  // ✅ NEW: List of bookings (one per client-worker pair)
+  bookings: [
+    {
+      ownerId: { type: Schema.Types.ObjectId, ref: "User" },
+      clientId: { type: Schema.Types.ObjectId, ref: "User" },
+      clientName: String,
+      description: String,
+    },
+  ],
 });
 
 //rund before the .save() and .create()

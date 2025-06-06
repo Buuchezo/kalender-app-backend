@@ -7,6 +7,7 @@ export interface IBooking {
   clientId: string | Types.ObjectId;
   clientName: string;
   description?: string;
+  workerName?: string;
 }
 export interface IAppointment extends Document {
   slug: string;

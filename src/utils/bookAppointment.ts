@@ -151,8 +151,7 @@ export async function bookAppointmentMiddleware(
 
     const user = req.user;
     const isAdmin = user?.role === "admin";
-    const userId =
-      user?.id?.toString?.() || user?._id?.toString?.() || eventData.clientId;
+    const userId = user?.id || user?._id?.toString?.();
 
     if (!userId) {
       return res.status(400).json({ message: "Missing user ID." });
